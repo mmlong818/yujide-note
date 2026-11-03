@@ -1,0 +1,4 @@
+# 本项目需要较新的 rustc（tauri-utils 2.10+ 要求 1.90+）。
+# 使用 rustup 已安装的 1.96.0 工具链，不改动全局默认。
+[toolchain]
+channel = "1.96.0"
