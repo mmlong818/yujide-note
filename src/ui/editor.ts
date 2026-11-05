@@ -1,7 +1,7 @@
 // 右侧编辑区：一张按便签颜色着色的“大便利贴”，内容按块堆叠
 
 import { el, autoGrow } from "./dom";
-import { toast, passwordModal, confirmModal, confirmDeletionPassword } from "./modals";
+import { toast, passwordModal, confirmModal, confirmDeletionPassword, textPromptModal } from "./modals";
 import {
   addTextBlock,
   encryptBlock,
@@ -9,6 +9,7 @@ import {
   lockAll,
   lockBlock,
   removeBlock,
+  renameSecureBlock,
   setColor,
   updateSecurePlain,
   tryUnlock,
@@ -149,23 +150,41 @@ async function onDeleteSecureBlock(note: Note, block: SecureBlock): Promise<void
   toast("已删除加密块");
 }
 
-/** 锁定的保密块：深色卡片，点击解锁；右侧 🗑 删除（需密码） */
+/** 锁定的保密块：深色卡片，显示自定义名称；点击解锁；✏️ 改名；🗑 删除（需密码） */
 function renderSealedBlock(note: Note, block: SecureBlock): HTMLElement {
   const card = el("div", "sealed");
   card.append(el("span", "sealed-icon", "🔒"));
   const textWrap = el("div", "sealed-text");
-  textWrap.append(el("div", "sealed-title", "已加密内容"));
-  if (block.hint) textWrap.append(el("div", "sealed-hint", `提示：${block.hint}`));
+  textWrap.append(el("div", "sealed-title", block.label || "已加密内容"));
+  const sub = block.hint ? `提示：${block.hint}` : "点击解锁";
+  textWrap.append(el("div", "sealed-hint", sub));
+  const edit = iconBtn("✏️", "修改显示名称");
+  edit.classList.add("sealed-del");
+  edit.onclick = (e) => {
+    e.stopPropagation();
+    void onRenameLabel(note, block);
+  };
   const del = iconBtn("🗑", "删除此块（需主密码）");
   del.classList.add("sealed-del");
   del.onclick = (e) => {
     e.stopPropagation();
     void onDeleteSecureBlock(note, block);
   };
-  card.append(textWrap, del, el("span", "sealed-go", "点击解锁 ›"));
+  card.append(textWrap, edit, del, el("span", "sealed-go", "解锁 ›"));
   card.onclick = () => void onUnlock(note, block);
   const row = el("div", "block-row sealed-row", card);
   return row;
+}
+
+/** 修改加密块对外显示名称（明文字段，无需密码） */
+async function onRenameLabel(note: Note, block: SecureBlock): Promise<void> {
+  const label = await textPromptModal({
+    title: "✏️ 修改显示名称",
+    placeholder: "如“银行卡密码”（锁定状态下可见，勿写敏感信息）",
+    value: block.label ?? "",
+  });
+  if (label === null) return;
+  renameSecureBlock(note.id, block.id, label);
 }
 
 /** 已解锁的保密块：可编辑文本 + 块尾常显 🔓 */
@@ -196,13 +215,19 @@ async function onEncrypt(note: Note, block: TextBlock): Promise<void> {
     return;
   }
   if (isSessionUnlocked()) {
-    // 会话已解锁：直接用缓存主密码加密
-    await encryptBlock(note.id, block.id);
+    // 会话已解锁：仍询问显示名称（便于锁定后识别），密码复用缓存的
+    const label = await textPromptModal({
+      title: "✏️ 显示名称（可选）",
+      placeholder: "如“银行卡密码”（锁定状态下可见，勿写敏感信息）",
+      okText: "加密",
+    });
+    if (label === null) return;
+    await encryptBlock(note.id, block.id, undefined, undefined, label);
     return;
   }
   const res = await passwordModal({ mode: "set" });
   if (!res || typeof res === "string") return;
-  await encryptBlock(note.id, block.id, res.password, res.hint);
+  await encryptBlock(note.id, block.id, res.password, res.hint, res.label);
 }
 
 async function onUnlock(note: Note, block: SecureBlock): Promise<void> {

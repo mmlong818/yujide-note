@@ -111,9 +111,11 @@ export function visibleNotes(): Note[] {
   return sortNotes(
     alive.filter((n) => {
       if (n.title.toLowerCase().includes(q)) return true;
-      return n.blocks.some(
-        (b): b is TextBlock => b.kind === "text" && b.content.toLowerCase().includes(q)
-      );
+      return n.blocks.some((b) => {
+        if (b.kind === "text") return b.content.toLowerCase().includes(q);
+        // 加密块的显示名称是明文，参与搜索便于定位
+        return !!b.label && b.label.toLowerCase().includes(q);
+      });
     })
   );
 }
@@ -413,7 +415,8 @@ export async function encryptBlock(
   noteId: string,
   blockId: string,
   password?: string,
-  hint?: string
+  hint?: string,
+  label?: string
 ): Promise<void> {
   const note = findNote(noteId);
   const block = note && findBlock(note, blockId);
@@ -432,8 +435,24 @@ export async function encryptBlock(
     cipher: data.cipher,
     updatedAt: Date.now(),
     ...(hint ? { hint } : {}),
+    ...(label ? { label } : {}),
   };
   note.blocks[idx] = secure;
+  note.updatedAt = Date.now();
+  touchEditor();
+  persistSoon();
+  emit();
+}
+
+/** 修改加密块的对外显示名称（明文字段，锁定状态可见） */
+export function renameSecureBlock(noteId: string, blockId: string, label: string): void {
+  const note = findNote(noteId);
+  const block = note && findBlock(note, blockId);
+  if (!note || !block || block.kind !== "secure") return;
+  const trimmed = label.trim();
+  if (trimmed) block.label = trimmed;
+  else delete block.label;
+  block.updatedAt = Date.now();
   note.updatedAt = Date.now();
   touchEditor();
   persistSoon();
@@ -512,6 +531,10 @@ export async function lockAll(): Promise<void> {
  * 否则随新数据回到锁定态（明文绝不写入持久层）。
  */
 export function replaceStore(merged: Store): void {
+  // 合并前记录当前选中便签的可见内容快照
+  const oldSel = getSelectedNote();
+  const oldSnap = oldSel ? JSON.stringify(snapNote(oldSel)) : null;
+
   const oldPlain = new Map<string, { cipher: string; plain: string }>();
   for (const n of state.store.notes) {
     for (const b of n.blocks) {
@@ -530,9 +553,30 @@ export function replaceStore(merged: Store): void {
     }
   }
   if (state.selectedNoteId && !getSelectedNote()) state.selectedNoteId = null;
-  touchEditor();
+
+  // 选中便签的可见内容没变时不重建编辑器：
+  // 同步在打字/输入法组合中途发生时，重建会让未上屏的输入“一闪消失”
+  const newSel = getSelectedNote();
+  const newSnap = newSel ? JSON.stringify(snapNote(newSel)) : null;
+  if (newSnap !== oldSnap) touchEditor();
   persistSoon();
   emit();
+}
+
+/** 编辑器重建相关字段的快照（刻意排除 updatedAt 等纯元数据） */
+function snapNote(n: Note): unknown {
+  return {
+    id: n.id,
+    title: n.title,
+    color: n.color,
+    pinned: n.pinned,
+    deletedAt: n.deletedAt,
+    blocks: n.blocks.map((b) =>
+      b.kind === "secure"
+        ? { id: b.id, kind: b.kind, salt: b.salt, iv: b.iv, cipher: b.cipher, label: b.label, hint: b.hint }
+        : { id: b.id, kind: b.kind, content: b.content }
+    ),
+  };
 }
 
 /** 供同步引擎读取的干净快照（无明文） */

@@ -19,7 +19,11 @@ function openModal(content: HTMLElement): ModalHandle {
   dialog.append(content);
   overlay.append(dialog);
   const onKey = (e: KeyboardEvent): void => {
-    if (e.key === "Escape") close();
+    // 中文输入法组合中按 Esc 是取消候选词，不能把弹窗一起关掉
+    if (e.key === "Escape") {
+      if (e.isComposing || e.keyCode === 229) return;
+      close();
+    }
   };
   const close = (): void => {
     overlay.remove();
@@ -33,7 +37,7 @@ function openModal(content: HTMLElement): ModalHandle {
   return { close };
 }
 
-export type PasswordResult = string | { password: string; hint?: string } | null;
+export type PasswordResult = string | { password: string; hint?: string; label?: string } | null;
 
 /**
  * 密码弹窗。
@@ -90,14 +94,17 @@ export function passwordModal(opts: {
       row.append(cancel, ok);
       box.append(row, err);
     } else {
-      box.append(el("h3", null, "🔒 设置主密码"));
+      box.append(el("h3", null, "🔒 加密此内容块"));
       box.append(
         el(
           "p",
           "desc",
-          "用于加密便签中的保密内容块。主密码不会存储在任何地方，忘记后对应内容将无法解开。"
+          "主密码不会存储在任何地方，忘记后对应内容将无法解开。显示名称在锁定状态下可见（明文），请勿把敏感信息写在这里。"
         )
       );
+      const name = el("input") as HTMLInputElement;
+      name.type = "text";
+      name.placeholder = "显示名称（可选，如“银行卡密码”）";
       const pw = el("input") as HTMLInputElement;
       const pw2 = el("input") as HTMLInputElement;
       const hint = el("input") as HTMLInputElement;
@@ -107,7 +114,7 @@ export function passwordModal(opts: {
       pw2.placeholder = "再输入一次";
       hint.placeholder = "密码提示（可选）";
       inputs = [pw, pw2];
-      box.append(pw, pw2, hint);
+      box.append(name, pw, pw2, hint);
       const row = el("div", "modal-actions");
       const cancel = el("button", "btn btn-ghost", "取消");
       const ok = el("button", "btn", "加密");
@@ -115,7 +122,11 @@ export function passwordModal(opts: {
       ok.onclick = () => {
         if (!pw.value) return showErr(pw, "密码不能为空");
         if (pw.value !== pw2.value) return showErr(pw2, "两次输入的密码不一致");
-        finish({ password: pw.value, hint: hint.value.trim() || undefined });
+        finish({
+          password: pw.value,
+          hint: hint.value.trim() || undefined,
+          label: name.value.trim() || undefined,
+        });
       };
       row.append(cancel, ok);
       box.append(row, err);
@@ -128,6 +139,58 @@ export function passwordModal(opts: {
       origClose();
     };
     inputs[0]?.focus();
+  });
+}
+
+/**
+ * 单行文本输入弹窗（如：修改加密块显示名称）
+ */
+export function textPromptModal(opts: {
+  title: string;
+  placeholder?: string;
+  value?: string;
+  okText?: string;
+}): Promise<string | null> {
+  return new Promise((outerResolve) => {
+    let settled = false;
+    const resolve = (v: string | null): void => {
+      if (settled) return;
+      settled = true;
+      outerResolve(v);
+    };
+
+    const box = el("div", "pw-box");
+    box.append(el("h3", null, opts.title));
+    const input = el("input") as HTMLInputElement;
+    input.type = "text";
+    input.placeholder = opts.placeholder ?? "";
+    input.value = opts.value ?? "";
+    box.append(input);
+    const row = el("div", "modal-actions");
+    const cancel = el("button", "btn btn-ghost", "取消");
+    const ok = el("button", "btn", opts.okText ?? "保存");
+    let modal: ModalHandle;
+    cancel.onclick = () => {
+      resolve(null);
+      modal.close();
+    };
+    ok.onclick = () => {
+      resolve(input.value);
+      modal.close();
+    };
+    input.onkeydown = (e) => {
+      if (e.key === "Enter") ok.click();
+    };
+    row.append(cancel, ok);
+    box.append(row);
+    modal = openModal(box);
+    const origClose = modal.close.bind(modal);
+    modal.close = () => {
+      resolve(null);
+      origClose();
+    };
+    input.focus();
+    input.select();
   });
 }
 

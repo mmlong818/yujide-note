@@ -19,6 +19,8 @@ export interface SecureBlock {
   iv: string;
   /** 密文，base64 */
   cipher: string;
+  /** 锁定状态下对外显示的名称（明文，如“银行卡密码”），便于识别 */
+  label?: string;
   /** 可选的密码提示 */
   hint?: string;
   updatedAt: number;
@@ -99,7 +101,10 @@ export function noteSummary(note: Note, maxLen = 40): string {
   const firstText = note.blocks.find(
     (b): b is TextBlock => b.kind === "text" && b.content.trim() !== ""
   );
-  const base = (firstText?.content ?? "").trim().replace(/\s+/g, " ");
+  const firstLabel = note.blocks.find(
+    (b): b is SecureBlock => b.kind === "secure" && !!b.label
+  );
+  const base = (firstText?.content ?? firstLabel?.label ?? "").trim().replace(/\s+/g, " ");
   return base.length > maxLen ? base.slice(0, maxLen) + "…" : base;
 }
 
